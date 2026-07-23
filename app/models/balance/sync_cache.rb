@@ -22,8 +22,17 @@ class Balance::SyncCache
       @entries_by_date ||= converted_entries.group_by(&:date)
     end
 
+    # Cash-equivalent holdings (e.g. money market/sweep funds like SPAXX, or a
+    # synthetic non-primary-currency cash holding) are imported as `Holding`
+    # rows so their position detail is preserved, but they represent cash, not
+    # an investment position. Excluding them here means
+    # `derive_cash_balance_on_date_from_total` (total - holdings_value)
+    # correctly attributes their value to the "cash" side of the balance
+    # chart instead of "holdings" — otherwise providers that fold their value
+    # into the account's reported cash figure (to avoid double-counting the
+    # total) would show $0 cash on the chart despite reporting real cash.
     def holdings_value_by_date
-      @holdings_value_by_date ||= account.holdings.each_with_object(Hash.new(0)) do |h, totals|
+      @holdings_value_by_date ||= account.holdings.includes(:security).reject { |h| h.cash_equivalent? || h.security.cash? }.each_with_object(Hash.new(0)) do |h, totals|
         begin
           converted = Money.new(h.amount, h.currency).exchange_to(account.currency, date: h.date).amount
         rescue Money::ConversionError
