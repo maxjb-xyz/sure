@@ -194,6 +194,26 @@ class Balance::SyncCacheTest < ActiveSupport::TestCase
     assert_equal 100, Balance::SyncCache.new(@account).get_holdings_value(Date.current)
   end
 
+  test "excludes cash-equivalent holdings so their value is attributed to cash, not holdings" do
+    stock = Security.create!(ticker: "TST", name: "Test")
+    money_market = Security.create!(ticker: "SPAXX", name: "Money Market Fund")
+
+    @account.holdings.create!(security: stock, date: Date.current, qty: 10, price: 100, amount: 1000, currency: "USD")
+    @account.holdings.create!(security: money_market, date: Date.current, qty: 4000, price: 1, amount: 4000, currency: "USD", cash_equivalent: true)
+
+    assert_equal 1000, Balance::SyncCache.new(@account).get_holdings_value(Date.current), "cash-equivalent holding value must not count toward holdings_value"
+  end
+
+  test "excludes synthetic cash-kind security holdings so their value is attributed to cash, not holdings" do
+    stock = Security.create!(ticker: "TST", name: "Test")
+    cash_security = Security.cash_for(@account)
+
+    @account.holdings.create!(security: stock, date: Date.current, qty: 10, price: 100, amount: 1000, currency: "USD")
+    @account.holdings.create!(security: cash_security, date: Date.current, qty: 800, price: 1, amount: 800, currency: "USD")
+
+    assert_equal 1000, Balance::SyncCache.new(@account).get_holdings_value(Date.current), "synthetic cash holding value must not count toward holdings_value"
+  end
+
   test "prioritizes custom rate over fetched rate" do
     # Create fetched rate
     ExchangeRate.create!(
