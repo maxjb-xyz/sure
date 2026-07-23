@@ -11,8 +11,27 @@ class UI::Account::Chart < ApplicationComponent
     @period ||= Period.last_30_days
   end
 
+  # Current value of holdings that aren't cash equivalents (e.g. money market/sweep
+  # funds, or a synthetic non-primary-currency cash holding) -- kept in sync with how
+  # Balance::SyncCache#get_holdings_value splits cash vs. holdings for the balance
+  # chart, so this header stat and the chart agree on what counts as "holdings".
   def holdings_value_money
-    account.balance_money - account.cash_balance_money
+    total = account.current_holdings.includes(:security).reject { |h| h.cash_equivalent? || h.security.cash? }.sum do |h|
+      begin
+        Money.new(h.amount, h.currency).exchange_to(account.currency, date: h.date).amount
+      rescue Money::ConversionError
+        h.amount
+      end
+    end
+
+    Money.new(total, account.currency)
+  end
+
+  # Cash equivalents are excluded from holdings_value_money above, so deriving cash
+  # from the total (rather than reading account.cash_balance_money directly) folds
+  # their value back into "cash" here -- matching the chart's cash_balance view.
+  def cash_balance_money
+    account.balance_money - holdings_value_money
   end
 
   def view_balance_money
@@ -22,7 +41,7 @@ class UI::Account::Chart < ApplicationComponent
     when "holdings_balance"
       holdings_value_money
     when "cash_balance"
-      account.cash_balance_money
+      cash_balance_money
     end
   end
 
