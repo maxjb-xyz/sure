@@ -85,6 +85,40 @@ class Transaction < ApplicationRecord
   # they represent real cash outflow from a budgeting perspective.
   BUDGET_EXCLUDED_KINDS = %w[funds_movement one_time cc_payment].freeze
 
+  # A persisted Transfer is the authoritative signal that two transaction
+  # records represent an internal movement. Reporting must exclude both legs
+  # even when their destination-specific kinds are budget-tracked.
+  scope :without_matched_transfer, -> { where(unmatched_transfer_sql) }
+  scope :for_cash_flow_reporting, -> { where(cash_flow_transfer_sql) }
+
+  def self.unmatched_transfer_sql(transaction_alias = table_name)
+    <<~SQL.squish
+      NOT EXISTS (
+        SELECT 1 FROM transfers
+        WHERE transfers.inflow_transaction_id = #{transaction_alias}.id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM transfers
+        WHERE transfers.outflow_transaction_id = #{transaction_alias}.id
+      )
+    SQL
+  end
+
+  # Investment contributions are internal transfers for reconciliation, but
+  # represent money leaving the user's spendable cash flow. Include their
+  # outflow leg in cash-flow reporting while excluding every other matched
+  # transfer leg to avoid double counting.
+  def self.cash_flow_transfer_sql(transaction_alias = table_name)
+    <<~SQL.squish
+      (EXISTS (
+        SELECT 1 FROM transfers
+        WHERE transfers.outflow_transaction_id = #{transaction_alias}.id
+          AND #{transaction_alias}.kind = 'investment_contribution'
+      )
+      OR (#{unmatched_transfer_sql(transaction_alias)}))
+    SQL
+  end
+
   # All valid investment activity labels (for UI dropdown)
   ACTIVITY_LABELS = [
     "Buy", "Sell", "Sweep In", "Sweep Out", "Dividend", "Reinvestment",

@@ -247,7 +247,13 @@ class PagesController < ApplicationController
 
       add_node = ->(unique_key, display_name, value, percentage, color) {
         node_indices[unique_key] ||= begin
-          nodes << { id: unique_key, name: display_name, value: value.to_f.round(2), percentage: percentage.to_f.round(1), color: color }
+          nodes << {
+            id: unique_key,
+            name: display_name,
+            value: value.to_f.round(2),
+            percentage: percentage.to_f.round(1),
+            color: color
+          }
           nodes.size - 1
         end
       }
@@ -421,12 +427,17 @@ class PagesController < ApplicationController
             name: ct.category.name,
             amount: ct.total.to_f.round(2),
             currency: ct.currency,
-            percentage: ct.weight.round(1),
+            percentage: 0,
             color: ct.category.color.presence || Category::UNCATEGORIZED_COLOR,
             icon: ct.category.lucide_icon,
             clickable: !ct.category.other_investments?
           }
         end
+
+      categories.each do |category|
+        category[:percentage] = total.zero? ? 0 : (category[:amount] / total * 100).round(1)
+      end
+      categories.sort_by! { |category| -category[:amount] }
 
       { categories: categories, total: total.to_f.round(2), currency: net_totals.currency, currency_symbol: currency_symbol }
     end

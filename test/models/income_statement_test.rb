@@ -385,6 +385,79 @@ class IncomeStatementTest < ActiveSupport::TestCase
     assert_equal Money.new(1400, @family.currency), totals.expense_money # 900 + 500 (abs of -500)
   end
 
+  test "includes matched investment contributions while excluding matched loan transfers" do
+    investment_account = @family.accounts.create!(
+      name: "Brokerage",
+      currency: @family.currency,
+      balance: 10_000,
+      accountable: Investment.new
+    )
+
+    investment_outflow = create_transaction(
+      account: @checking_account,
+      amount: 1_000,
+      category: @family.investment_contributions_category,
+      kind: "investment_contribution"
+    )
+    investment_inflow = create_transaction(
+      account: investment_account,
+      amount: -1_000,
+      category: nil,
+      kind: "funds_movement"
+    )
+    Transfer.create!(outflow_transaction: investment_outflow.entryable, inflow_transaction: investment_inflow.entryable, status: "confirmed")
+
+    loan_outflow = create_transaction(
+      account: @checking_account,
+      amount: 500,
+      category: nil,
+      kind: "loan_payment"
+    )
+    loan_inflow = create_transaction(
+      account: @loan_account,
+      amount: -500,
+      category: nil,
+      kind: "funds_movement"
+    )
+    Transfer.create!(outflow_transaction: loan_outflow.entryable, inflow_transaction: loan_inflow.entryable, status: "confirmed")
+
+    income_statement = IncomeStatement.new(@family)
+    totals = income_statement.totals(date_range: Period.last_30_days.date_range)
+
+    assert_equal 5, totals.transactions_count
+    assert_equal Money.new(1000, @family.currency), totals.income_money
+    assert_equal Money.new(1900, @family.currency), totals.expense_money
+    assert_equal Money.new(1000, @family.currency), income_statement.matched_investment_contribution_outflow_total(period: Period.last_30_days)
+    assert_equal 1900, income_statement.median_expense(interval: "month")
+    assert_equal 1900, income_statement.avg_expense(interval: "month")
+    assert_equal 900, income_statement.median_expense(interval: "month", category: @groceries_category)
+    assert_equal 900, income_statement.avg_expense(interval: "month", category: @groceries_category)
+  end
+
+  test "can treat matched investment contributions as transfers for a user" do
+    investment_account = @family.accounts.create!(
+      name: "Brokerage",
+      currency: @family.currency,
+      balance: 10_000,
+      accountable: Investment.new
+    )
+    outflow = create_transaction(
+      account: @checking_account,
+      amount: 1_000,
+      category: @family.investment_contributions_category,
+      kind: "investment_contribution"
+    )
+    inflow = create_transaction(account: investment_account, amount: -1_000, kind: "funds_movement")
+    Transfer.create!(outflow_transaction: outflow.entryable, inflow_transaction: inflow.entryable, status: "confirmed")
+    user = users(:empty)
+    user.update!(preferences: (user.preferences || {}).merge("treat_investment_contributions_as_transfers" => true))
+
+    totals = IncomeStatement.new(@family, user: user).totals(date_range: Period.last_30_days.date_range)
+
+    assert_equal Money.new(900, @family.currency), totals.expense_money
+    assert_equal 4, totals.transactions_count
+  end
+
   # Tax-Advantaged Account Exclusion Tests
   test "excludes transactions from tax-advantaged Roth IRA accounts" do
     # Create a Roth IRA (tax-exempt) investment account

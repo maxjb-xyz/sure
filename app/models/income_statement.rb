@@ -119,6 +119,20 @@ class IncomeStatement
     totals(transactions_scope: scope, date_range: period.date_range)
   end
 
+  # Investment transfers are excluded from income/expense analytics, but the
+  # dashboard still surfaces their cash movement in its separate outflows view.
+  def matched_investment_contribution_outflow_total(period:)
+    InvestmentContributionOutflows.new(
+      family,
+      date_range: period.date_range,
+      included_account_ids: included_account_ids
+    ).call
+  end
+
+  def include_investment_contributions?
+    !user&.treat_investment_contributions_as_transfers?
+  end
+
   # Accounts actually reflected in totals/totals_for: visible, not excluded
   # from reports, not tax-advantaged, and (when scoped to a user) included in
   # that user's finances. Callers offering an account filter (e.g. a
@@ -227,15 +241,17 @@ class IncomeStatement
     def family_stats(interval: "month")
       @family_stats ||= {}
       @family_stats[interval] ||= Rails.cache.fetch([
-        "income_statement", "family_stats", family.id, user&.id, interval, included_account_ids_hash, family.entries_cache_version
-      ]) { FamilyStats.new(family, interval:, account_ids: included_account_ids).call }
+        "income_statement", "family_stats", family.id, user&.id, interval, included_account_ids_hash,
+        family.entries_cache_version, family.transfers_cache_version, include_investment_contributions?
+      ]) { FamilyStats.new(family, interval:, account_ids: included_account_ids, include_investment_contributions: include_investment_contributions?).call }
     end
 
     def category_stats(interval: "month")
       @category_stats ||= {}
       @category_stats[interval] ||= Rails.cache.fetch([
-        "income_statement", "category_stats", family.id, user&.id, interval, included_account_ids_hash, family.entries_cache_version
-      ]) { CategoryStats.new(family, interval:, account_ids: included_account_ids).call }
+        "income_statement", "category_stats", family.id, user&.id, interval, included_account_ids_hash,
+        family.entries_cache_version, family.transfers_cache_version, include_investment_contributions?
+      ]) { CategoryStats.new(family, interval:, account_ids: included_account_ids, include_investment_contributions: include_investment_contributions?).call }
     end
 
     def included_account_ids
@@ -250,8 +266,10 @@ class IncomeStatement
       sql_hash = Digest::MD5.hexdigest(transactions_scope.to_sql)
 
       Rails.cache.fetch([
-        "income_statement", "totals_query", "v2", family.id, user&.id, included_account_ids_hash, sql_hash, date_range.begin, date_range.end, family.entries_cache_version, family.accounts.maximum(:updated_at)&.to_i
-      ]) { Totals.new(family, transactions_scope: transactions_scope, date_range: date_range, included_account_ids: included_account_ids).call }
+        "income_statement", "totals_query", "v3", family.id, user&.id, included_account_ids_hash, sql_hash,
+        date_range.begin, date_range.end, family.entries_cache_version, family.transfers_cache_version, include_investment_contributions?,
+        family.accounts.maximum(:updated_at)&.to_i
+      ]) { Totals.new(family, transactions_scope: transactions_scope, date_range: date_range, included_account_ids: included_account_ids, include_investment_contributions: include_investment_contributions?).call }
     end
 
     def monetizable_currency
